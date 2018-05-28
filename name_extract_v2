@@ -1,0 +1,203 @@
+import custom_generator as generator
+import bbox_utils as utils
+import data_preparation_fishes as prep
+from keras.models import Model
+from keras.layers import Dropout, Flatten, Dense, MaxPooling2D, BatchNormalization
+from keras import applications, optimizers
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+import keras.backend as K
+import numpy as np
+import pandas as pd
+import os
+from PIL import Image
+import json
+import shutil
+import random
+from keras.preprocessing import image
+import re
+from keras.preprocessing.image import ImageDataGenerator
+
+train_path = 'C:/Projects/DeepLearning/Code_base/text_extractor/train'
+test_path  = 'C:/Projects/DeepLearning/Code_base/text_extractor/test'
+boxs_path ='C:/Projects/DeepLearning/Code_base/text_extractor/bounding_boxes/emailid.json'
+
+img_width, img_height = 224, 224
+epochs = 10
+batch_size = 20
+
+if K.image_data_format() == 'channels_first':
+    input_shape = (3, img_width, img_height)
+else:
+    input_shape = (img_width, img_height, 3)
+    
+def get_file_sizes(directory):
+    file2sizes = {}
+    for fname in os.listdir(directory):
+     tmp = os.path.join(directory, fname)
+     file2sizes[fname] = Image.open(tmp).size
+    return file2sizes  
+
+def get_bounding_boxes(bbox_directory):                
+    null_largest = {'width':0, 'height': 0, 'x': 0, 'y': 0}
+    file2boxes = {}
+    fp = open(bbox_directory) 
+    bxs = json.load(fp)
+    for item in bxs:            
+        fname = item['filename'].split('/')[-1]
+        if len(item['annotations'])>0:
+                largest = sorted(item['annotations'], key=lambda x: x['height']*x['width'])[-1]
+                largest.pop('class')
+        else:
+            largest = null_largest
+        file2boxes[fname] = largest
+    return file2boxes    
+
+def convert_bb(box, from_size, desired_size):
+        item = box.copy()
+        conv_x = (float(desired_size[0]) / float(from_size[0]))
+        conv_y = (float(desired_size[1]) / float(from_size[1]))
+        item['height'] = item['height']*conv_y
+        item['width'] = item['width']*conv_x
+        item['x'] = max(item['x']*conv_x, 0)
+        item['y'] = max(item['y']*conv_y, 0)
+        return item
+
+def adjust_bounding_boxes(file2boxes, file2sizes, desired_size):
+    f2b = file2boxes.copy()
+    for file, box in f2b.items():
+        tmp = convert_bb(box, file2sizes[file], desired_size)
+        f2b[file] = [tmp['x'], tmp['y'], tmp['height'], tmp['width']]
+    return f2b 
+
+
+def preapare_full_dataset_for_flow(train_dir_original, test_dir_original, target_base_dir, val_percent=0.2):
+    train_dir = os.path.join(target_base_dir, 'train')
+    validation_dir = os.path.join(target_base_dir, 'validation')
+    test_dir = os.path.join(target_base_dir, 'test')
+
+    if os.path.exists(target_base_dir):
+        print('required directory structure already exists. learning continues with existing data')
+    else:          
+        os.mkdir(target_base_dir)
+        os.mkdir(train_dir)
+        os.mkdir(validation_dir)
+        os.mkdir(test_dir)
+               
+        shutil.move(test_dir_original, test_dir)
+        print('moving of test data to target test directory finished')
+        
+        files = os.listdir(train_dir_original)
+        train_files = [os.path.join(train_dir_original, f) for f in files]
+        random.shuffle(train_files)    
+        n = int(len(train_files) * val_percent)
+        val = train_files[:n]
+        train = train_files[n:]  
+
+        for t in train:
+             shutil.copy2(t, train_dir)
+        for v in val:
+             shutil.copy2(v, validation_dir)
+        print('moving of input data to train and validation folders finished')
+
+    nb_train_samples = 0  
+    nb_validation_samples = 0
+    
+    nb_train_samples = len(os.listdir(train_dir))
+    print('total training images:', nb_train_samples)
+    
+    nb_validation_samples = len(os.listdir(validation_dir))
+    print('total validation images:', nb_validation_samples)    
+
+    nb_test_samples = len(os.listdir(test_dir+'/test'))
+    print('total test images:', nb_test_samples )
+    
+    
+    return train_dir, validation_dir, test_dir, nb_train_samples, nb_validation_samples, nb_test_samples
+
+
+    
+file2sizes = get_file_sizes(train_path)
+file2boxes = get_bounding_boxes(boxs_path)
+desired_size = (img_width, img_width)
+file2boxes = adjust_bounding_boxes(file2boxes, file2sizes, desired_size)
+
+
+
+    
+base_model = applications.VGG16(include_top=False, weights='imagenet', 
+                           input_shape=(img_width, img_height, 3))
+
+p = 0.2
+x = base_model.output
+x = MaxPooling2D()(x)
+x = BatchNormalization(axis=1)(x)
+x = Dropout(p/4)(x)
+x = Flatten()(x)
+x = Dense(512, activation='relu')(x)
+x = BatchNormalization()(x)
+x = Dropout(p)(x)
+x = Dense(512, activation='relu')(x)
+x = BatchNormalization()(x)
+x = Dropout(p/2)(x)
+x_bb = Dense(4, name='bb')(x)
+x_class = Dense(4 , name='class')(x)
+
+for layer in base_model.layers:
+    layer.trainable=False    
+model = Model(inputs=base_model.input, outputs=[x_bb])
+print(model.summary())
+
+model.compile(optimizers.Adam(lr=0.001), 
+              loss=['mse'], 
+              metrics=['accuracy'],
+              loss_weights=[.001])
+
+
+train_datagen = ImageDataGenerator(
+    rescale=1. / 255,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True)
+
+# this is the augmentation configuration we will use for testing:
+# only rescaling
+test_datagen = ImageDataGenerator(rescale=1. / 255)
+
+train_generator = train_datagen.flow_from_directory('C:/Projects/DeepLearning/Code_base/text_extractor/target1',
+    target_size=(img_width, img_height),
+    batch_size=batch_size,
+    class_mode='sparse')
+
+
+
+model.fit(x=X_train, y=y_train, epochs=epochs, 
+                    batch_size=batch_size, validation_split=0.1,
+                    callbacks=[save_weights])
+
+
+
+train_generator = DirectoryIterator(train_dir,  target_size= (img_width, img_height), 
+                                            batch_size=batch_size,  shuffle=True, map_extras=file2boxes)
+
+validation_generator = image.DirectoryIterator(validation_dir,  target_size= (img_width, img_height), 
+                                            batch_size=batch_size,  shuffle=True, map_extras=file2boxes)
+
+save_weights = ModelCheckpoint('model.h5', monitor='val_loss', save_best_only=True)
+
+history = model.fit_generator(
+    train_generator,
+    steps_per_epoch=1, #nb_train_samples//batch_size,
+    epochs=1, #epochs,
+    validation_data=validation_generator,
+    validation_steps=nb_validation_samples//batch_size,
+    callbacks=[save_weights])
+
+test_generator = generator.DirectoryIterator(test_dir,  target_size= (img_width, img_height), 
+                                            class_mode = None, batch_size=batch_size,  shuffle=True)
+preds = model.predict_generator(test_generator, nb_test_samples//batch_size)
+
+class_probs = utils.do_clip(preds[1],0.82)
+df = pd.DataFrame(class_probs, columns=['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT'])
+img_ids = np.array([f.split('\\')[-1] for f in test_generator.filenames])
+df.insert(0, 'image', img_ids)
+df.to_csv('submission.csv', index=False)
