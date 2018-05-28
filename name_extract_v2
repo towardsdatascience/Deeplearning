@@ -201,3 +201,7 @@ df = pd.DataFrame(class_probs, columns=['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHE
 img_ids = np.array([f.split('\\')[-1] for f in test_generator.filenames])
 df.insert(0, 'image', img_ids)
 df.to_csv('submission.csv', index=False)
+
+
+
+https://www.programcreek.com/python/example/89223/keras.preprocessing.image.load_img
