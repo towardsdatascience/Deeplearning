@@ -1,0 +1,14 @@
+https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyqt4
+
+
+https://github.com/cvhciKIT/sloth/blob/master/doc/installation.rst
+https://media.readthedocs.org/pdf/sloth/latest/sloth.pdf
+
+git clone https://github.com/cvhciKIT/sloth.git
+cd sloth
+python setup.py install
+python sloth/bin/sloth examples/example1_labels.json
+
+
+Note: ----We cann easily install sloth for pyhton 3.6 and upper version + best combination of pyqt4
+----------Add this path to pyhtonpath variable in sys level properties--- C:\Users\Anvesh\Anaconda3\Lib\site-packages\sloth\bin
