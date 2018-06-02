@@ -1,0 +1,159 @@
+import custom_generator as generator
+import bbox_utils as utils
+import data_preparation_fishes as prep
+from keras.models import Model
+from keras.layers import Dropout, Flatten, Dense, MaxPooling2D, BatchNormalization
+from keras import applications, optimizers
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+import keras.backend as K
+import numpy as np
+import pandas as pd
+import os
+from PIL import Image
+import json
+import shutil
+import random
+from keras.preprocessing import image
+
+from keras.models import Sequential
+from keras.preprocessing.image import ImageDataGenerator
+
+
+train_path = 'C:/Projects/DeepLearning/Code_base/text_extractor/train'
+test_path  = 'C:/Projects/DeepLearning/Code_base/text_extractor/test'
+boxs_path ='C:/Projects/DeepLearning/Code_base/text_extractor/bounding_boxes/emailid.json'
+
+
+
+img_width, img_height = 224, 224
+epochs = 10
+batch_size = 20
+
+if K.image_data_format() == 'channels_first':
+    input_shape = (3, img_width, img_height)
+else:
+    input_shape = (img_width, img_height, 3)
+    
+def get_file_sizes(directory):
+    file2sizes = {}
+    for fname in os.listdir(directory):
+     tmp = os.path.join(directory, fname)
+     file2sizes[fname] = Image.open(tmp).size
+    return file2sizes  
+
+def get_bounding_boxes(bbox_directory):                
+    null_largest = {'width':0, 'height': 0, 'x': 0, 'y': 0}
+    file2boxes = {}
+    fp = open(bbox_directory) 
+    bxs = json.load(fp)
+    for item in bxs:            
+        fname = item['filename'].split('/')[-1]
+        if len(item['annotations'])>0:
+                largest = sorted(item['annotations'], key=lambda x: x['height']*x['width'])[-1]
+                largest.pop('class')
+        else:
+            largest = null_largest
+        file2boxes[fname] = largest
+    return file2boxes    
+
+def convert_bb(box, from_size, desired_size):
+        item = box.copy()
+        conv_x = (float(desired_size[0]) / float(from_size[0]))
+        conv_y = (float(desired_size[1]) / float(from_size[1]))
+        item['height'] = item['height']*conv_y
+        item['width'] = item['width']*conv_x
+        item['x'] = max(item['x']*conv_x, 0)
+        item['y'] = max(item['y']*conv_y, 0)
+        return item
+
+def adjust_bounding_boxes(file2boxes, file2sizes, desired_size):
+    f2b = file2boxes.copy()
+    for file, box in f2b.items():
+        tmp = convert_bb(box, file2sizes[file], desired_size)
+        f2b[file] = [tmp['x'], tmp['y'], tmp['height'], tmp['width']]
+    return f2b 
+
+def preapare_full_dataset_for_flow(train_dir_original, test_dir_original, target_base_dir, val_percent=0.2):
+    train_dir = os.path.join(target_base_dir, 'train')
+    validation_dir = os.path.join(target_base_dir, 'validation')
+    test_dir = os.path.join(target_base_dir, 'test')
+
+    if os.path.exists(target_base_dir):
+        print('required directory structure already exists. learning continues with existing data')
+    else:          
+        os.mkdir(target_base_dir)
+        os.mkdir(train_dir)
+        os.mkdir(validation_dir)
+        os.mkdir(test_dir)
+               
+        shutil.move(test_dir_original, test_dir)
+        print('moving of test data to target test directory finished')
+        
+        files = os.listdir(train_dir_original)
+        train_files = [os.path.join(train_dir_original, f) for f in files]
+        random.shuffle(train_files)    
+        n = int(len(train_files) * val_percent)
+        val = train_files[:n]
+        train = train_files[n:]  
+
+        for t in train:
+             shutil.copy2(t, train_dir)
+        for v in val:
+             shutil.copy2(v, validation_dir)
+        print('moving of input data to train and validation folders finished')
+
+    nb_train_samples = 0  
+    nb_validation_samples = 0
+    
+    nb_train_samples = len(os.listdir(train_dir))
+    print('total training images:', nb_train_samples)
+    
+    nb_validation_samples = len(os.listdir(validation_dir))
+    print('total validation images:', nb_validation_samples)    
+
+    nb_test_samples = len(os.listdir(test_dir+'/test'))
+    print('total test images:', nb_test_samples )
+    
+    
+    return train_dir, validation_dir, test_dir, nb_train_samples, nb_validation_samples, nb_test_samples
+
+
+file2sizes = get_file_sizes(train_path)
+file2boxes = get_bounding_boxes(boxs_path)
+desired_size = (img_width, img_width)
+file2boxes = adjust_bounding_boxes(file2boxes, file2sizes, desired_size)
+
+train_dir, validation_dir, test_dir, nb_train_samples, nb_validation_samples,nb_test_samples = \
+                    preapare_full_dataset_for_flow(
+                            train_dir_original = train_path, 
+                            test_dir_original = test_path,
+                            target_base_dir = 'C:/Projects/DeepLearning/Code_base/text_extractor/target1')
+
+
+#train_array  = np.array([np.array(Image.open(train_dir+'/'+fname)) for fname in os.listdir(train_dir)])
+#xcv = train_array[0]
+
+
+x_train_array = pd.DataFrame(image.img_to_array(Image.open(train_dir+'/'+fname)) for fname in os.listdir(train_dir))
+
+y_train =pd.DataFrame(file2boxes[fname] for fname in os.listdir(train_dir))
+
+model = Sequential()
+model.add(Dense(units=1, , activation='sigmoid'))
+
+model.compile(optimizer='sgd', loss='mean_squared_error', metrics=['accuracy'])
+
+history = model.fit(x=x_train_array, y=y_train, verbose=3, epochs=100, batch_size=5)
+print(model.summary())
+print(model.get_weights())
+
+
+
+
+
+
+
+
+history = model.fit(x=X_train, y=y_train, verbose=3, epochs=100, validation_data=(X_validation,y_validation), batch_size=10)
+print(model.summary())
+print(model.get_weights())
